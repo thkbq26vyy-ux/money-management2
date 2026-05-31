@@ -1,0 +1,422 @@
+import { useState, useEffect, useCallback } from "react";
+
+const STORAGE_KEY = "bill-tracker-data";
+
+const defaultData = {
+  bills: [],
+  debts: [],
+};
+
+function formatCurrency(val) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(val || 0);
+}
+
+function generateId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+const CATEGORIES = ["Housing", "Utilities", "Subscriptions", "Insurance", "Food", "Transport", "Healthcare", "Other"];
+const DUE_OPTIONS = Array.from({ length: 31 }, (_, i) => i + 1);
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(10,12,20,0.82)", zIndex: 100,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem"
+    }}>
+      <div style={{
+        background: "#13172b", border: "1px solid #2a2f52", borderRadius: "1rem",
+        padding: "2rem", width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto",
+        boxShadow: "0 8px 60px rgba(0,0,0,0.6)"
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+          <h2 style={{ margin: 0, color: "#e8eaf6", fontFamily: "'DM Serif Display', Georgia, serif", fontSize: "1.3rem" }}>{title}</h2>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", color: "#9095b8", fontSize: "1.5rem",
+            cursor: "pointer", lineHeight: 1, padding: "0.2rem 0.5rem", borderRadius: "0.4rem"
+          }}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Input({ label, ...props }) {
+  return (
+    <div style={{ marginBottom: "1rem" }}>
+      {label && <label style={{ display: "block", color: "#9095b8", fontSize: "0.75rem", fontFamily: "monospace", letterSpacing: "0.1em", marginBottom: "0.4rem", textTransform: "uppercase" }}>{label}</label>}
+      <input {...props} style={{
+        width: "100%", background: "#0e1122", border: "1px solid #2a2f52", borderRadius: "0.5rem",
+        color: "#e8eaf6", padding: "0.65rem 0.9rem", fontSize: "0.95rem", outline: "none",
+        boxSizing: "border-box", fontFamily: "inherit",
+        ...(props.style || {})
+      }} />
+    </div>
+  );
+}
+
+function Select({ label, children, ...props }) {
+  return (
+    <div style={{ marginBottom: "1rem" }}>
+      {label && <label style={{ display: "block", color: "#9095b8", fontSize: "0.75rem", fontFamily: "monospace", letterSpacing: "0.1em", marginBottom: "0.4rem", textTransform: "uppercase" }}>{label}</label>}
+      <select {...props} style={{
+        width: "100%", background: "#0e1122", border: "1px solid #2a2f52", borderRadius: "0.5rem",
+        color: "#e8eaf6", padding: "0.65rem 0.9rem", fontSize: "0.95rem", outline: "none",
+        boxSizing: "border-box", fontFamily: "inherit", appearance: "none"
+      }}>{children}</select>
+    </div>
+  );
+}
+
+function Btn({ children, variant = "primary", small, ...props }) {
+  const colors = {
+    primary: { bg: "#4f5de8", hover: "#6472f0", color: "#fff" },
+    success: { bg: "#22c55e", hover: "#16a34a", color: "#fff" },
+    danger: { bg: "#ef4444", hover: "#dc2626", color: "#fff" },
+    ghost: { bg: "transparent", hover: "#1e2240", color: "#9095b8", border: "1px solid #2a2f52" },
+  };
+  const c = colors[variant];
+  return (
+    <button {...props} style={{
+      background: c.bg, color: c.color, border: c.border || "none", borderRadius: "0.5rem",
+      padding: small ? "0.35rem 0.7rem" : "0.65rem 1.3rem",
+      fontSize: small ? "0.8rem" : "0.9rem", cursor: "pointer", fontFamily: "inherit",
+      fontWeight: 600, transition: "background 0.15s", ...(props.style || {})
+    }}>{children}</button>
+  );
+}
+
+function BillForm({ initial, onSave, onClose }) {
+  const [form, setForm] = useState(initial || { name: "", amount: "", category: "Other", dueDay: "1", autopay: false, notes: "" });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  return (
+    <>
+      <Input label="Bill Name" value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Netflix, Rent, Electric" />
+      <Input label="Monthly Amount ($)" type="number" min="0" step="0.01" value={form.amount} onChange={e => set("amount", e.target.value)} placeholder="0.00" />
+      <Select label="Category" value={form.category} onChange={e => set("category", e.target.value)}>
+        {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+      </Select>
+      <Select label="Due Day of Month" value={form.dueDay} onChange={e => set("dueDay", e.target.value)}>
+        {DUE_OPTIONS.map(d => <option key={d} value={d}>{d}</option>)}
+      </Select>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1rem" }}>
+        <input type="checkbox" checked={form.autopay} onChange={e => set("autopay", e.target.checked)} id="autopay" />
+        <label htmlFor="autopay" style={{ color: "#9095b8", fontSize: "0.9rem" }}>Autopay enabled</label>
+      </div>
+      <Input label="Notes (optional)" value={form.notes} onChange={e => set("notes", e.target.value)} placeholder="Any notes..." />
+      <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end", marginTop: "0.5rem" }}>
+        <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+        <Btn onClick={() => { if (form.name && form.amount) onSave(form); }}>Save Bill</Btn>
+      </div>
+    </>
+  );
+}
+
+function DebtForm({ initial, onSave, onClose }) {
+  const [form, setForm] = useState(initial || { name: "", totalAmount: "", remaining: "", minPayment: "", interestRate: "", notes: "" });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  return (
+    <>
+      <Input label="Debt Name" value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Credit Card, Car Loan, Student Loan" />
+      <Input label="Original Total ($)" type="number" min="0" step="0.01" value={form.totalAmount} onChange={e => set("totalAmount", e.target.value)} placeholder="0.00" />
+      <Input label="Remaining Balance ($)" type="number" min="0" step="0.01" value={form.remaining} onChange={e => set("remaining", e.target.value)} placeholder="0.00" />
+      <Input label="Minimum Payment ($)" type="number" min="0" step="0.01" value={form.minPayment} onChange={e => set("minPayment", e.target.value)} placeholder="0.00" />
+      <Input label="Interest Rate (% APR)" type="number" min="0" step="0.01" value={form.interestRate} onChange={e => set("interestRate", e.target.value)} placeholder="e.g. 19.99" />
+      <Input label="Notes (optional)" value={form.notes} onChange={e => set("notes", e.target.value)} placeholder="Lender, account #, etc." />
+      <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end", marginTop: "0.5rem" }}>
+        <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+        <Btn onClick={() => { if (form.name && form.totalAmount) onSave(form); }}>Save Debt</Btn>
+      </div>
+    </>
+  );
+}
+
+function PaymentModal({ debt, onSave, onClose }) {
+  const [amount, setAmount] = useState("");
+  return (
+    <Modal title={`Log Payment — ${debt.name}`} onClose={onClose}>
+      <p style={{ color: "#9095b8", marginTop: 0 }}>Remaining: <strong style={{ color: "#ef4444" }}>{formatCurrency(debt.remaining)}</strong></p>
+      <Input label="Payment Amount ($)" type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" />
+      <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end", marginTop: "0.5rem" }}>
+        <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+        <Btn variant="success" onClick={() => { if (amount) onSave(parseFloat(amount)); }}>Log Payment</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+const TAB_STYLE = (active) => ({
+  padding: "0.55rem 1.2rem", borderRadius: "0.5rem", border: "none", cursor: "pointer",
+  fontFamily: "inherit", fontWeight: 600, fontSize: "0.9rem", transition: "all 0.15s",
+  background: active ? "#4f5de8" : "transparent",
+  color: active ? "#fff" : "#9095b8",
+});
+
+const PILL = (color) => ({
+  display: "inline-block", padding: "0.2rem 0.6rem", borderRadius: "99px",
+  fontSize: "0.72rem", fontWeight: 700, background: color + "22", color: color,
+  letterSpacing: "0.04em", fontFamily: "monospace",
+});
+
+export default function App() {
+  const [data, setData] = useState(defaultData);
+  const [tab, setTab] = useState("bills");
+  const [showBillForm, setShowBillForm] = useState(false);
+  const [editBill, setEditBill] = useState(null);
+  const [showDebtForm, setShowDebtForm] = useState(false);
+  const [editDebt, setEditDebt] = useState(null);
+  const [payDebt, setPayDebt] = useState(null);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) setData(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  const save = useCallback((next) => {
+    setData(next);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
+  }, []);
+
+  const addBill = (form) => {
+    save({ ...data, bills: [...data.bills, { ...form, id: generateId(), paid: false }] });
+    setShowBillForm(false);
+  };
+  const updateBill = (form) => {
+    save({ ...data, bills: data.bills.map(b => b.id === editBill.id ? { ...b, ...form } : b) });
+    setEditBill(null);
+  };
+  const togglePaid = (id) => {
+    save({ ...data, bills: data.bills.map(b => b.id === id ? { ...b, paid: !b.paid } : b) });
+  };
+  const deleteBill = (id) => {
+    save({ ...data, bills: data.bills.filter(b => b.id !== id) });
+  };
+
+  const addDebt = (form) => {
+    save({ ...data, debts: [...data.debts, { ...form, id: generateId(), payments: [] }] });
+    setShowDebtForm(false);
+  };
+  const updateDebt = (form) => {
+    save({ ...data, debts: data.debts.map(d => d.id === editDebt.id ? { ...d, ...form } : d) });
+    setEditDebt(null);
+  };
+  const deleteDebt = (id) => {
+    save({ ...data, debts: data.debts.filter(d => d.id !== id) });
+  };
+  const logPayment = (debtId, amount) => {
+    save({
+      ...data, debts: data.debts.map(d => {
+        if (d.id !== debtId) return d;
+        const newRemaining = Math.max(0, parseFloat(d.remaining) - amount);
+        return { ...d, remaining: newRemaining.toFixed(2), payments: [...(d.payments || []), { amount, date: new Date().toLocaleDateString() }] };
+      })
+    });
+    setPayDebt(null);
+  };
+
+  const totalBills = data.bills.reduce((s, b) => s + parseFloat(b.amount || 0), 0);
+  const paidBills = data.bills.filter(b => b.paid).reduce((s, b) => s + parseFloat(b.amount || 0), 0);
+  const unpaidBills = totalBills - paidBills;
+  const totalDebt = data.debts.reduce((s, d) => s + parseFloat(d.remaining || 0), 0);
+  const totalMinPayments = data.debts.reduce((s, d) => s + parseFloat(d.minPayment || 0), 0);
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0c14", color: "#e8eaf6", fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+
+      <div style={{ borderBottom: "1px solid #1a1f38", padding: "1.25rem 1.5rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <h1 style={{ margin: 0, fontFamily: "'DM Serif Display', Georgia, serif", fontSize: "1.6rem", color: "#e8eaf6", letterSpacing: "-0.02em" }}>
+            💰 Bill & Debt Tracker
+          </h1>
+          <p style={{ margin: "0.2rem 0 0", color: "#5a5f82", fontSize: "0.82rem" }}>Keep everything in one place</p>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "1rem", padding: "1.25rem 1.5rem" }}>
+        {[
+          { label: "Monthly Bills", value: formatCurrency(totalBills), sub: `${data.bills.length} bills`, color: "#4f5de8" },
+          { label: "Paid This Month", value: formatCurrency(paidBills), sub: `${data.bills.filter(b => b.paid).length} paid`, color: "#22c55e" },
+          { label: "Still Owed (Bills)", value: formatCurrency(unpaidBills), sub: `${data.bills.filter(b => !b.paid).length} unpaid`, color: "#f59e0b" },
+          { label: "Total Debt", value: formatCurrency(totalDebt), sub: `min ${formatCurrency(totalMinPayments)}/mo`, color: "#ef4444" },
+        ].map(card => (
+          <div key={card.label} style={{ background: "#13172b", border: "1px solid #1e2240", borderRadius: "0.85rem", padding: "1rem 1.1rem" }}>
+            <div style={{ color: "#5a5f82", fontSize: "0.72rem", fontFamily: "monospace", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: "0.4rem" }}>{card.label}</div>
+            <div style={{ fontSize: "1.45rem", fontWeight: 700, color: card.color, fontFamily: "'DM Serif Display', serif" }}>{card.value}</div>
+            <div style={{ color: "#5a5f82", fontSize: "0.78rem", marginTop: "0.25rem" }}>{card.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ padding: "0 1.5rem", display: "flex", gap: "0.5rem", borderBottom: "1px solid #1a1f38" }}>
+        <button style={TAB_STYLE(tab === "bills")} onClick={() => setTab("bills")}>📋 Bills</button>
+        <button style={TAB_STYLE(tab === "debts")} onClick={() => setTab("debts")}>🏦 Debts</button>
+      </div>
+
+      {tab === "bills" && (
+        <div style={{ padding: "1.25rem 1.5rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+            <h2 style={{ margin: 0, fontSize: "1rem", color: "#9095b8", fontWeight: 600 }}>Monthly Bills</h2>
+            <Btn small onClick={() => setShowBillForm(true)}>+ Add Bill</Btn>
+          </div>
+
+          {data.bills.length === 0 && (
+            <div style={{ textAlign: "center", padding: "3rem 1rem", color: "#3a3f62", border: "1px dashed #1e2240", borderRadius: "1rem" }}>
+              <div style={{ fontSize: "2.5rem", marginBottom: "0.5rem" }}>📋</div>
+              <div>No bills yet. Add your first bill!</div>
+            </div>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            {data.bills.map(bill => (
+              <div key={bill.id} style={{
+                background: "#13172b", border: `1px solid ${bill.paid ? "#22c55e33" : "#1e2240"}`,
+                borderRadius: "0.85rem", padding: "1rem 1.1rem",
+                display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap",
+                opacity: bill.paid ? 0.75 : 1
+              }}>
+                <input type="checkbox" checked={bill.paid} onChange={() => togglePaid(bill.id)}
+                  style={{ width: 18, height: 18, accentColor: "#22c55e", cursor: "pointer", flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 140 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 600, fontSize: "0.95rem", textDecoration: bill.paid ? "line-through" : "none", color: bill.paid ? "#5a5f82" : "#e8eaf6" }}>{bill.name}</span>
+                    <span style={PILL("#9095b8")}>{bill.category}</span>
+                    {bill.autopay && <span style={PILL("#4f5de8")}>AUTOPAY</span>}
+                    {bill.paid && <span style={PILL("#22c55e")}>PAID</span>}
+                  </div>
+                  <div style={{ color: "#5a5f82", fontSize: "0.78rem", marginTop: "0.2rem" }}>
+                    Due: {bill.dueDay}{bill.dueDay == 1 ? "st" : bill.dueDay == 2 ? "nd" : bill.dueDay == 3 ? "rd" : "th"} of month
+                    {bill.notes && <span> · {bill.notes}</span>}
+                  </div>
+                </div>
+                <div style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.2rem", color: bill.paid ? "#22c55e" : "#e8eaf6", minWidth: 80, textAlign: "right" }}>
+                  {formatCurrency(bill.amount)}
+                </div>
+                <div style={{ display: "flex", gap: "0.4rem" }}>
+                  <Btn small variant="ghost" onClick={() => setEditBill(bill)}>Edit</Btn>
+                  <Btn small variant="danger" onClick={() => deleteBill(bill.id)}>✕</Btn>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {data.bills.length > 0 && (
+            <div style={{ marginTop: "1rem", background: "#0e1122", border: "1px solid #1e2240", borderRadius: "0.85rem", padding: "1rem 1.1rem", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
+              <span style={{ color: "#9095b8" }}>Total Monthly Bills</span>
+              <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.3rem", color: "#4f5de8" }}>{formatCurrency(totalBills)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "debts" && (
+        <div style={{ padding: "1.25rem 1.5rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+            <h2 style={{ margin: 0, fontSize: "1rem", color: "#9095b8", fontWeight: 600 }}>Debt Tracker</h2>
+            <Btn small onClick={() => setShowDebtForm(true)}>+ Add Debt</Btn>
+          </div>
+
+          {data.debts.length === 0 && (
+            <div style={{ textAlign: "center", padding: "3rem 1rem", color: "#3a3f62", border: "1px dashed #1e2240", borderRadius: "1rem" }}>
+              <div style={{ fontSize: "2.5rem", marginBottom: "0.5rem" }}>🏦</div>
+              <div>No debts tracked. Add a debt to start monitoring your payoff progress!</div>
+            </div>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            {data.debts.map(debt => {
+              const total = parseFloat(debt.totalAmount || 0);
+              const remaining = parseFloat(debt.remaining || 0);
+              const paid = total - remaining;
+              const pct = total > 0 ? Math.min(100, (paid / total) * 100) : 0;
+              const paid_off = remaining <= 0;
+              return (
+                <div key={debt.id} style={{ background: "#13172b", border: `1px solid ${paid_off ? "#22c55e44" : "#1e2240"}`, borderRadius: "0.85rem", padding: "1.1rem" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "0.5rem" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                        <span style={{ fontWeight: 600, fontSize: "1rem" }}>{debt.name}</span>
+                        {paid_off && <span style={PILL("#22c55e")}>PAID OFF 🎉</span>}
+                        {debt.interestRate && <span style={PILL("#f59e0b")}>{debt.interestRate}% APR</span>}
+                      </div>
+                      {debt.notes && <div style={{ color: "#5a5f82", fontSize: "0.78rem", marginTop: "0.2rem" }}>{debt.notes}</div>}
+                    </div>
+                    <div style={{ display: "flex", gap: "0.4rem" }}>
+                      {!paid_off && <Btn small variant="success" onClick={() => setPayDebt(debt)}>Log Payment</Btn>}
+                      <Btn small variant="ghost" onClick={() => setEditDebt(debt)}>Edit</Btn>
+                      <Btn small variant="danger" onClick={() => deleteDebt(debt.id)}>✕</Btn>
+                    </div>
+                  </div>
+
+                  <div style={{ margin: "0.85rem 0 0.5rem" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.78rem", color: "#5a5f82", marginBottom: "0.35rem" }}>
+                      <span>Paid: {formatCurrency(paid)}</span>
+                      <span>{pct.toFixed(1)}% paid off</span>
+                      <span>Remaining: <strong style={{ color: "#ef4444" }}>{formatCurrency(remaining)}</strong></span>
+                    </div>
+                    <div style={{ height: 8, background: "#0e1122", borderRadius: 99, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${pct}%`, background: paid_off ? "#22c55e" : "linear-gradient(90deg, #4f5de8, #22c55e)", borderRadius: 99, transition: "width 0.4s" }} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginTop: "0.6rem" }}>
+                    <div style={{ color: "#5a5f82", fontSize: "0.8rem" }}>Original: <span style={{ color: "#9095b8" }}>{formatCurrency(total)}</span></div>
+                    {debt.minPayment && <div style={{ color: "#5a5f82", fontSize: "0.8rem" }}>Min Payment: <span style={{ color: "#9095b8" }}>{formatCurrency(debt.minPayment)}/mo</span></div>}
+                  </div>
+
+                  {debt.payments && debt.payments.length > 0 && (
+                    <div style={{ marginTop: "0.75rem", borderTop: "1px solid #1e2240", paddingTop: "0.75rem" }}>
+                      <div style={{ color: "#5a5f82", fontSize: "0.72rem", fontFamily: "monospace", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: "0.4rem" }}>Payment History</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                        {debt.payments.slice(-8).map((p, i) => (
+                          <span key={i} style={{ background: "#0e1122", border: "1px solid #1e2240", borderRadius: "0.4rem", padding: "0.2rem 0.55rem", fontSize: "0.77rem", color: "#22c55e" }}>
+                            +{formatCurrency(p.amount)} <span style={{ color: "#3a3f62" }}>{p.date}</span>
+                          </span>
+                        ))}
+                        {debt.payments.length > 8 && <span style={{ color: "#3a3f62", fontSize: "0.77rem", alignSelf: "center" }}>+{debt.payments.length - 8} more</span>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {data.debts.length > 0 && (
+            <div style={{ marginTop: "1rem", background: "#0e1122", border: "1px solid #1e2240", borderRadius: "0.85rem", padding: "1rem 1.1rem", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: "0.5rem" }}>
+              <span style={{ color: "#9095b8" }}>Total Remaining Debt</span>
+              <span style={{ fontFamily: "'DM Serif Display', serif", fontSize: "1.3rem", color: "#ef4444" }}>{formatCurrency(totalDebt)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showBillForm && (
+        <Modal title="Add New Bill" onClose={() => setShowBillForm(false)}>
+          <BillForm onSave={addBill} onClose={() => setShowBillForm(false)} />
+        </Modal>
+      )}
+      {editBill && (
+        <Modal title="Edit Bill" onClose={() => setEditBill(null)}>
+          <BillForm initial={editBill} onSave={updateBill} onClose={() => setEditBill(null)} />
+        </Modal>
+      )}
+      {showDebtForm && (
+        <Modal title="Add New Debt" onClose={() => setShowDebtForm(false)}>
+          <DebtForm onSave={addDebt} onClose={() => setShowDebtForm(false)} />
+        </Modal>
+      )}
+      {editDebt && (
+        <Modal title="Edit Debt" onClose={() => setEditDebt(null)}>
+          <DebtForm initial={editDebt} onSave={updateDebt} onClose={() => setEditDebt(null)} />
+        </Modal>
+      )}
+      {payDebt && (
+        <PaymentModal debt={payDebt} onSave={(amt) => logPayment(payDebt.id, amt)} onClose={() => setPayDebt(null)} />
+      )}
+    </div>
+  );
+}
