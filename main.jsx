@@ -1,3 +1,4 @@
+import React from 'react'
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
